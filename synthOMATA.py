@@ -1,6 +1,7 @@
 import pygame
 import numpy as np
 import random
+from scipy.ndimage import convolve
 
 # Define constants
 GRID_SIZE = 8
@@ -12,14 +13,15 @@ BLACK = (0, 0, 0)
 GRAY = (192, 192, 192)  # For Brian's Brain
 
 # Define the maximum number of channels at the top of your script
-MAX_CHANNELS = 64  # or any number that suits your requirements
+MAX_CHANNELS = 8  # or any number that suits your requirements
 FREQ = 8000  # Same as audio CD quality 8000, 16000, 22050, 24000, 32000, 44100, 48000
 BUFFER = 256  # 4096 is a better buffer size but may result in sound lag
 
 # Frame rates for each rule set
 FRAMERATE_CONWAY = 4
 FRAMERATE_WOLFRAM = 4
-FRAMERATE_BRIANS_BRAIN = 4 
+FRAMERATE_BRIANS_BRAIN = 4
+FRAMERATE_LENIA = 4 
 
 # Define a maximum volume for each channel
 max_channel_volume = 0.1  # 50% of the maximum volume
@@ -38,18 +40,18 @@ class Menu:
         self.screen = screen
         self.font = font
         self.framerate = framerate 
-
         self.running = True
         self.grid = None  # This will hold the cellular automaton grid
         self.init_grid()  # Initialize the grid with a random state
         self.constants = {
-            'GRID_SIZE': 16,
-            'CELL_SIZE': 32,
-            'FRAMERATE_CONWAY': 4,
-            'FRAMERATE_WOLFRAM': 4,
-            'FRAMERATE_BRIANS_BRAIN': 4,
-            'MAX_CHANNELS': 16,
-            'FREQ': 8000
+            'GRID_SIZE': GRID_SIZE,
+            'CELL_SIZE': CELL_SIZE,
+            'FRAMERATE_CONWAY': FRAMERATE_CONWAY,
+            'FRAMERATE_WOLFRAM': FRAMERATE_WOLFRAM,
+            'FRAMERATE_BRIANS_BRAIN': FRAMERATE_BRIANS_BRAIN,
+            'FRAMERATE_LENIA': FRAMERATE_LENIA,
+            'MAX_CHANNELS': MAX_CHANNELS,
+            'FREQ': FREQ
         }
         self.selected_constant = list(self.constants.keys())[0]
         self.index = 0
@@ -66,6 +68,7 @@ class Menu:
             self.update_conway()  # Update the grid using the Conway's Game of Life rules
             self.draw_grid()  # Draw the grid as the background
             self.draw_menu()  # Draw the menu on top of the grid
+            
             pygame.display.flip()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -83,6 +86,7 @@ class Menu:
                         self.running = False
                         pygame.quit()
                         quit()
+
     def update_conway(self):
         new_grid = np.zeros_like(self.grid)
         for y in range(self.grid.shape[0]):
@@ -176,6 +180,7 @@ def run_synthesizer(settings):
     FRAMERATE_CONWAY = settings['FRAMERATE_CONWAY']
     FRAMERATE_WOLFRAM = settings['FRAMERATE_WOLFRAM']
     FRAMERATE_BRIANS_BRAIN = settings['FRAMERATE_BRIANS_BRAIN']
+    FRAMERATE_LENIA = settings['FRAMERATE_LENIA']
     MAX_CHANNELS = settings['MAX_CHANNELS']
     FREQ = settings['FREQ']
 
@@ -187,8 +192,6 @@ def run_synthesizer(settings):
     # Grid to hold the state of the cells
     grid = np.zeros((GRID_SIZE, GRID_SIZE), dtype=int)
 
-    # Rule set: 0 for Conway's Game of Life, 1 for Wolfram ECA, 2 for Brian's Brain
-    rule_set = 0
     # Update the window size
     WINDOW_WIDTH = GRID_SIZE * CELL_SIZE
     WINDOW_HEIGHT = GRID_SIZE * CELL_SIZE
@@ -203,21 +206,22 @@ def run_synthesizer(settings):
 
 cell_to_channel = {}  # Dictionary to map cells to their sound channels
 
-def manage_cell_sounds(grid, frequencies, cell_to_channel, grid_width, grid_height):
+def manage_cell_sounds(grid, frequencies, cell_to_channel, grid_width, grid_height, automaton_type, old_grid=None):
     for y in range(grid_height):
         for x in range(grid_width):
-            cell_state = grid[y][x]
             cell_index = (y, x)
 
-            # If the cell is on and doesn't have a sound playing, start a sound
-            if cell_state == 1 and cell_index not in cell_to_channel:
-                frequency = calculate_frequency_for_cell(x, y, grid_width, grid_height, frequencies)
-                channel = play_frequency(frequency)
-                cell_to_channel[cell_index] = channel
-            # If the cell is off and has a sound playing, stop the sound
-            elif cell_state == 0 and cell_index in cell_to_channel:
-                channel = cell_to_channel.pop(cell_index)
-                channel.stop()
+            if automaton_type in ['conway', 'wolfram', 'brians_brain', 'lenia']:
+                cell_state = grid[y][x]
+                # If the cell is on and doesn't have a sound playing, start a sound
+                if cell_state == 1 and cell_index not in cell_to_channel:
+                    frequency = calculate_frequency_for_cell(x, y, grid_width, grid_height, frequencies)
+                    channel = play_frequency(frequency)
+                    cell_to_channel[cell_index] = channel
+                # If the cell is off and has a sound playing, stop the sound
+                elif cell_state == 0 and cell_index in cell_to_channel:
+                    channel = cell_to_channel.pop(cell_index)
+                    channel.stop()
 
     # Clean up finished channels
     for cell_index, channel in list(cell_to_channel.items()):
@@ -248,7 +252,9 @@ def play_frequency(frequency):
         # Set the volume of this channel to not exceed the maximum
         channel.set_volume(max_channel_volume)
     else:
-        print(f"Failed to play sound for frequency: {frequency}")
+        #print(f"Failed to play sound for frequency: {frequency}")
+        pass
+
     return channel
 
 
@@ -338,6 +344,32 @@ def update_conway(grid):
                 new_grid[y, x] = 1
     return new_grid
 
+def update_lenia(grid, growth_rate=0.1, decay_rate=0.01, cannibalize_rate=0.05, threshold=0.5):
+    kernel = np.array([[0, 1, 2], 
+                       [1, 4, 1], 
+                       [2, 1, 1]])
+    kernel = kernel / kernel.sum()
+
+    # Apply convolution to the grid
+    convolved = convolve(grid, kernel, mode='wrap')
+
+    # Non-linear transformation
+    transformed = 1 / (1 + np.exp(-convolved + threshold))
+
+    # Growth and decay
+    new_grid = grid + growth_rate * transformed - decay_rate * grid
+
+    # Cannibalization
+    cannibalized = convolve(grid > threshold, kernel, mode='wrap')
+    new_grid -= cannibalize_rate * cannibalized
+
+    # Clipping the grid values
+    new_grid = np.clip(new_grid, 0, 1)
+
+
+    return new_grid
+
+
 def update_wolfram(grid, rule_number):
     new_grid = np.zeros_like(grid)
     new_grid[0] = grid[0]  # Copy the first row as is
@@ -391,15 +423,17 @@ def get_live_neighbors(x, y):
             count += grid[ny, nx] == 1
     return count
 
-# Function to apply a Wolfram rule set to a row of cells
 def apply_rule(row, rule_number):
     rule_string = "{:08b}".format(rule_number)
-    new_row = np.zeros_like(row)
-    for i in range(1, len(row) - 1):  # Avoid the edges for simplicity
+    new_row = np.zeros_like(row, dtype=int)  # Ensure new_row is of integer type
+    row = row.astype(int)  # Convert row to integer type
+
+    for i in range(1, len(row) - 1):
         # Convert the three cells into a number between 0 and 7
         neighborhood = (row[i-1] << 2) | (row[i] << 1) | row[i+1]
-        # Apply the rule: if the bit at position neighborhood is 1, then the cell is alive
-        new_row[i] = int(rule_string[7 - neighborhood])  # Flip the string to match the rule order
+        # Apply the rule
+        new_row[i] = int(rule_string[7 - neighborhood])
+
     return new_row
 
 # Function to generate frame data from the grid
@@ -433,15 +467,40 @@ if __name__ == "__main__":
 # Main loop
 running = True
 while running:
-    # Check the rule set and set the appropriate frame rate
-    if rule_set == 0:
-        clock.tick(FRAMERATE_CONWAY)
-    elif rule_set == 1:
-        clock.tick(FRAMERATE_WOLFRAM)
-    elif rule_set == 2:
-        clock.tick(FRAMERATE_BRIANS_BRAIN)
 
-    # Handle events
+    # Save old grid state for comparison
+    old_grid = np.copy(grid)
+
+    # Update the grid and manage sounds
+    if rule_set == 0:  # Conway's Game of Life
+        clock.tick(FRAMERATE_CONWAY)
+        grid = update_conway(grid)
+        manage_cell_sounds(grid, lydian_frequencies, cell_to_channel, GRID_SIZE, GRID_SIZE, 'conway')
+    elif rule_set == 1:  # Wolfram's Elementary Cellular Automata
+        clock.tick(FRAMERATE_WOLFRAM)
+        grid = update_wolfram(grid, rule_number)
+        manage_cell_sounds(grid, lydian_frequencies, cell_to_channel, GRID_SIZE, GRID_SIZE, 'wolfram')
+    elif rule_set == 2:  # Brian's Brain
+        clock.tick(FRAMERATE_BRIANS_BRAIN)
+        grid = update_brians_brain(grid)
+        manage_cell_sounds(grid, lydian_frequencies, cell_to_channel, GRID_SIZE, GRID_SIZE, 'brians_brain')
+    elif rule_set == 3:  # Lenia
+        
+        # refresh the grid
+             
+        clock.tick(FRAMERATE_LENIA)
+        grid = update_lenia(grid)
+        for channel in cell_to_channel.values():
+            
+            old_grid = np.copy(grid)
+            
+            if channel:
+                #modulate the channel volume
+                channel.set_volume(0.1 * FRAMERATE_LENIA)
+                
+                channel.stop()
+        manage_cell_sounds(grid, lydian_frequencies, cell_to_channel, GRID_SIZE, GRID_SIZE, 'lenia', old_grid)
+
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -456,12 +515,12 @@ while running:
                 # Calculate velocity
                 velocity = np.linalg.norm(np.array(mouse_click_pos) - np.array(prev_mouse_position if prev_mouse_position else mouse_click_pos))
                 prev_mouse_position = mouse_click_pos
-                if rule_set in [0, 2]:  # For Conway and Brian's Brain, apply explosion effect
+                if rule_set in [0, 2, 3]:  # For Conway and Brian's Brain, apply explosion effect
                     create_explosion_brians_brain(mouse_click_pos, velocity, GRID_SIZE)
                 elif rule_set == 1:  # If it's Wolfram ECA, change the rule number
                     rule_number = random.randint(0, 255)
             elif event.button == 3:  # Right click, change rule type
-                rule_set = (rule_set + 1) % 3
+                rule_set = (rule_set + 1) % 4
                 #grid = np.zeros((GRID_SIZE, GRID_SIZE), dtype=int)  # Reset grid when switching rule sets
                 if rule_set == 1:  # If switching to Wolfram ECA, choose a random rule number
                     rule_number = random.randint(0, 255)
@@ -471,23 +530,7 @@ while running:
                 update_volume(volume_steps[volume_level_index], cell_to_channel)
 
     
-    # Save old grid state for comparison
-    old_grid = np.copy(grid)
 
-    # Update the grid for the next generation based on the current rule set
-    if rule_set == 0:
-        grid = update_conway(grid)
-    elif rule_set == 1:
-        grid = update_wolfram(grid, rule_number)
-    elif rule_set == 2:
-        grid = update_brians_brain(grid)
-    
-    # Play a tone if there are any changed cells
-    manage_cell_sounds(grid, lydian_frequencies, cell_to_channel, GRID_SIZE, GRID_SIZE)
-
-
-    # In the main loop before drawing the grid:
-    frame_data = generate_frame_data(grid, CELL_SIZE, GRID_SIZE)
 
 
     # Draw the current state of the grid
