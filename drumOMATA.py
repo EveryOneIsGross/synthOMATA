@@ -5,52 +5,92 @@ import random
 import wave
 import contextlib
 import pygame.mixer
+from pydub.playback import play
+from pydub import AudioSegment
+import io
+from scipy.ndimage import convolve
+
+# Initialize pygame
+pygame.init()
+
+# Initialize the mixer
+pygame.mixer.init()
 
 
 # Define constants
-GRID_SIZE = 8
+GRID_SIZE = 9
 CELL_SIZE = 64
 WINDOW_WIDTH = GRID_SIZE * CELL_SIZE
 WINDOW_HEIGHT = GRID_SIZE * CELL_SIZE
 
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-GRAY = (192, 192, 192)  # For Brian's Brain
+WHITE = (255, 255, 255) #Alive
+BLACK = (0, 0, 0) #Dead
+GRAY = (192, 192, 192)  #Dying
 
 SAMPLE = 'loop.wav'
+HALF_SPEED = True
 
 FREQ = 8000  # Same as audio CD quality 8000, 16000, 22050, 24000, 32000, 44100, 48000
-BUFFER = 256  # 4096 is a better buffer size but may result in sound lag
+BUFFER = 128  # 4096 is a better buffer size but may result in sound lag
 SLICES = 16  # Number of slices to divide the audio file into
 
 # Define the maximum number of channels at the top of your script
-MAX_CHANNELS = 4  # or any number that suits your requirements
+MAX_CHANNELS = 8  # or any number that suits your requirements
 
 # Frame rates for each rule set
 FRAMERATE_CONWAY = 8
 FRAMERATE_WOLFRAM = 8
-FRAMERATE_BRIANS_BRAIN = 8 
+FRAMERATE_BRIANS_BRAIN = 8
 
 
+def load_and_slice_wav_to_sounds(filename, num_slices=SLICES, half_speed=HALF_SPEED):
+    # Load the full audio file using pydub
+    full_audio = AudioSegment.from_file(filename, format="wav")
+    duration = len(full_audio)
+    cell_duration = duration / num_slices
 
-# Function to load and slice a WAV file
-def load_and_slice_wav(filename, num_slices=SLICES):
-    with contextlib.closing(wave.open(filename, 'rb')) as f:
-        frames = f.getnframes()
-        rate = f.getframerate()
-        duration = frames / float(rate)
-        cell_duration = duration / num_slices
-        cell_frames = int(rate * cell_duration)
+    sound_objects = []
+    for i in range(num_slices):
+        # Calculate the start and end times for the slice
+        start_time = i * cell_duration
+        end_time = start_time + cell_duration
+        # Extract the slice from the full audio
+        audio_slice = full_audio[start_time:end_time]
 
-        f.rewind()
-        audio_slices = []
-        for _ in range(num_slices):
-            audio_slice = f.readframes(cell_frames)
-            audio_slices.append(audio_slice)
+        if half_speed:
+            # To change the pitch, the frame rate needs to be changed.
+            # This will halve the frame rate (and the pitch)
+            audio_slice = audio_slice._spawn(audio_slice.raw_data, overrides={
+                "frame_rate": int(audio_slice.frame_rate / 2)
+            }).set_frame_rate(audio_slice.frame_rate // 2)
 
-    return audio_slices, rate
+        # Export the audio slice to a byte-like object
+        byte_io = io.BytesIO()
+        audio_slice.export(byte_io, format="wav")
+        byte_io.seek(0)
+
+        # Load the byte-like object into a pygame Sound object
+        sound = pygame.mixer.Sound(byte_io)
+        sound_objects.append(sound)
+
+    # The sample rate is halved if half_speed is True
+    sample_rate = full_audio.frame_rate
+    if half_speed:
+        sample_rate //= 2
+
+    return sound_objects, sample_rate
 
 
+# Initialize the sound pool
+def init_sound_pool(sound_objects, max_channels):
+    sound_pool = []
+    for _ in range(max_channels):
+        sound_pool.append(random.choice(sound_objects))
+    return sound_pool
+
+# Usage example
+audio_sounds, sample_rate = load_and_slice_wav_to_sounds(SAMPLE)
+sound_pool = init_sound_pool(audio_sounds, MAX_CHANNELS)
 
 class Menu:
     def __init__(self, screen, font, framerate=30):  # default framerate set to 10
@@ -62,14 +102,14 @@ class Menu:
         self.grid = None  # This will hold the cellular automaton grid
         self.init_grid()  # Initialize the grid with a random state
         self.constants = {
-            'GRID_SIZE': 16,
-            'CELL_SIZE': 32,
-            'FRAMERATE_CONWAY': 4,
-            'FRAMERATE_WOLFRAM': 4,
-            'FRAMERATE_BRIANS_BRAIN': 4,
-            'MAX_CHANNELS': 16,
-            'FREQ': 8000,
-            'SLICES': 8
+            'GRID_SIZE': GRID_SIZE,
+            'CELL_SIZE': CELL_SIZE,
+            'FRAMERATE_CONWAY': FRAMERATE_CONWAY,
+            'FRAMERATE_WOLFRAM': FRAMERATE_WOLFRAM,
+            'FRAMERATE_BRIANS_BRAIN': FRAMERATE_BRIANS_BRAIN,
+            'MAX_CHANNELS': MAX_CHANNELS,
+            'FREQ': FREQ,
+            'SLICES': SLICES
         }
         self.selected_constant = list(self.constants.keys())[0]
         self.index = 0
@@ -159,6 +199,7 @@ class Menu:
             self.index = (self.index + 1) % len(self.constants)
         self.selected_constant = list(self.constants.keys())[self.index]
 
+
     def update_constant(self, key):
         # Cycle through predefined frequency values
         predefined_freqs = [8000, 16000, 22050, 24000, 32000, 44100, 48000]
@@ -204,8 +245,9 @@ def run_synthesizer(settings):
 
 
 
-def manage_cell_sounds_slices(grid, audio_slices, cell_to_channel, grid_width, grid_height, sample_rate):
-    num_slices = len(audio_slices)
+# Now, when you need to play a sound for a cell, you can simply retrieve it from the sound pool:
+def manage_cell_sounds_slices(grid, sound_pool, cell_to_channel, grid_width, grid_height, sample_rate):
+    num_slices = len(sound_pool)
     total_cells = grid_width * grid_height
     max_volume = 1.5  # The maximum volume for each channel when only one is playing
     threshold_active_channels = 64  # Define a threshold for when to start reducing volume
@@ -223,18 +265,16 @@ def manage_cell_sounds_slices(grid, audio_slices, cell_to_channel, grid_width, g
         y, x = divmod(i, grid_width)
         cell_state = grid[y][x]
         cell_index = (y, x)
-        slice_index = i % num_slices  # Loop over the 16 slices
-        audio_slice = audio_slices[slice_index]
+        sound = sound_pool[i % num_slices]  # Retrieve sound from the pool
 
         if cell_state == 1 and cell_index not in cell_to_channel:
-            sound = pygame.mixer.Sound(buffer=audio_slice)
             channel = pygame.mixer.find_channel()
             if channel:
-                channel.set_volume(volume_scale)  # Set volume based on the number of active channels
                 channel.play(sound)
                 cell_to_channel[cell_index] = channel
             else:
-                print(f"No available channel to play sound for cell: {cell_index}")
+                #print(f"No available channel to play sound for cell: {cell_index}")
+                pass
         elif cell_state == 0 and cell_index in cell_to_channel:
             channel = cell_to_channel.pop(cell_index)
             if channel:
@@ -294,6 +334,39 @@ def update_brians_brain(grid):
                 new_grid[y, x] = 0
     return new_grid
 
+def update_lenia(grid, growth_rate=0.1, decay_rate=0.05, cannibalize_rate=0.03, threshold=0.5):
+    kernel = np.array([[0, 2, 0], 
+                       [0, 0, 2], 
+                       [1, 0, 0]])
+    kernel = kernel / kernel.sum()
+
+    # Apply convolution to the grid
+    convolved = convolve(grid, kernel, mode='wrap')
+
+    # Non-linear transformation
+    transformed = 1 / (1 + np.exp(-convolved + threshold))
+
+    # Growth and decay
+    new_grid = grid + growth_rate * transformed - decay_rate * grid
+
+    # Cannibalization
+    cannibalized = convolve(grid > threshold, kernel, mode='wrap')
+    new_grid -= cannibalize_rate * cannibalized
+
+    # Clipping the grid values
+    new_grid = np.clip(new_grid, 0, 1)
+
+    return new_grid
+
+
+
+def create_lenia_trigger(grid_size):
+    # Initialize the grid with random values
+    grid = np.random.rand(grid_size, grid_size)
+
+    return grid
+
+
 # Function to create an explosion effect at a given position
 def create_explosion(pos, velocity, grid_size):
     radius = int(velocity / 5) + 1  # The radius of the explosion is based on the velocity
@@ -329,13 +402,17 @@ def get_live_neighbors(x, y):
 # Function to apply a Wolfram rule set to a row of cells
 def apply_rule(row, rule_number):
     rule_string = "{:08b}".format(rule_number)
-    new_row = np.zeros_like(row)
-    for i in range(1, len(row) - 1):  # Avoid the edges for simplicity
+    new_row = np.zeros_like(row, dtype=int)  # Ensure new_row is of integer type
+    row = row.astype(int)  # Convert row to integer type
+
+    for i in range(1, len(row) - 1):
         # Convert the three cells into a number between 0 and 7
         neighborhood = (row[i-1] << 2) | (row[i] << 1) | row[i+1]
-        # Apply the rule: if the bit at position neighborhood is 1, then the cell is alive
-        new_row[i] = int(rule_string[7 - neighborhood])  # Flip the string to match the rule order
+        # Apply the rule
+        new_row[i] = int(rule_string[7 - neighborhood])
+
     return new_row
+
 
 # Function to generate frame data from the grid
 def generate_frame_data(grid, cell_size, grid_size):
@@ -358,9 +435,9 @@ grid = np.zeros((GRID_SIZE, GRID_SIZE), dtype=int)
 rule_set = 0
 
 # Replace 'your_audio_file.wav' with the actual path to your WAV file
-audio_slices, sample_rate = load_and_slice_wav(SAMPLE)
+audio_slices, sample_rate = load_and_slice_wav_to_sounds(SAMPLE)
+pygame.mixer.init(frequency=sample_rate, size=-16, channels=16, buffer=BUFFER)
 
-pygame.mixer.init(frequency=FREQ, size=-16, channels=16, buffer=BUFFER)
 pygame.mixer.set_num_channels(MAX_CHANNELS)
 
 cell_to_channel = {}  # Dictionary to map cells to their sound channels
@@ -387,8 +464,10 @@ if __name__ == "__main__":
     # After menu.run_menu() completes, the SLICES value should be updated.
     # This is missing in your code.
     # It should be something like this:
+# After menu.run_menu() completes, the SLICES value should be updated.
     SLICES = menu.constants['SLICES']
-    audio_slices, sample_rate = load_and_slice_wav(SAMPLE, SLICES)
+    audio_slices, sample_rate = load_and_slice_wav_to_sounds(SAMPLE, SLICES)
+
 
     # Update the grid and window size after the menu
     grid = np.zeros((GRID_SIZE, GRID_SIZE), dtype=int)
@@ -405,6 +484,8 @@ while running:
         clock.tick(FRAMERATE_WOLFRAM)
     elif rule_set == 2:
         clock.tick(FRAMERATE_BRIANS_BRAIN)
+    elif rule_set == 3:
+        clock.tick(FRAMERATE_CONWAY)
     
     # Handle events
     for event in pygame.event.get():
@@ -420,20 +501,18 @@ while running:
                 # Calculate velocity
                 velocity = np.linalg.norm(np.array(mouse_click_pos) - np.array(prev_mouse_position if prev_mouse_position else mouse_click_pos))
                 prev_mouse_position = mouse_click_pos
-                if rule_set in [0, 2]:  # For Conway and Brian's Brain, apply explosion effect
+                if rule_set in [0, 2, 3]:  # For Conway, Brian's Brain, and Lenia
                     create_explosion_brians_brain(mouse_click_pos, velocity, GRID_SIZE)
                 elif rule_set == 1:  # If it's Wolfram ECA, change the rule number
                     rule_number = random.randint(0, 255)
             elif event.button == 3:  # Right click, change rule type
-                rule_set = (rule_set + 1) % 3
-                #grid = np.zeros((GRID_SIZE, GRID_SIZE), dtype=int)  # Reset grid when switching rule sets
+                rule_set = (rule_set + 1) % 4
                 if rule_set == 1:  # If switching to Wolfram ECA, choose a random rule number
                     rule_number = random.randint(0, 255)
 
 
-    
-    # Save old grid state for comparison
-    old_grid = np.copy(grid)
+
+
 
     # Update the grid for the next generation based on the current rule set
     if rule_set == 0:
@@ -442,6 +521,9 @@ while running:
         grid = update_wolfram(grid, rule_number)
     elif rule_set == 2:
         grid = update_brians_brain(grid)
+    elif rule_set == 3:
+        grid = update_lenia(grid)
+
     
     # Play a tone if there are any changed cells
 
