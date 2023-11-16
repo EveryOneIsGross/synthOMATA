@@ -298,7 +298,6 @@ def update_volume(volume, cell_to_channel):
 
 
 
-
 def play_grid_tones(grid, frequencies):
     grid_height = len(grid)
     grid_width = len(grid[0])
