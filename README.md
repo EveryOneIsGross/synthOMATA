@@ -35,10 +35,11 @@ RIGHT CLICK to evolve the rules governing the life of your cellular soundscape.
 ┏┓┏┏┓╋┣┓┏┓┏┓┏
 ┛┗┫┛┗┗┛┗┗ ┛┗┛
   ┛          
+```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ** DANGEROUS SOUNDS WARNING **
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
+
 2 many channels at once WILL distort, so tread careful and manage volumes with SndVol.exe \m/. Limit channels to avoid distortion.
 
 Each cell in your grid represents a sound channel, limiting the number of channels manages polyphony. In drumOMATA the grid position represents a slice of the provided loop.wav (replace loop.wav with yr own). In synthOMATA each position is a sinewave. There is a threshold condition modulating volume per channel. Each FRAME is a generation and equates to TIME.
