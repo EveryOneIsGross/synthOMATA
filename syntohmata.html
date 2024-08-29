@@ -1,0 +1,237 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Volume2, VolumeX, Play, Pause } from 'lucide-react';
+
+// Constants
+const GRID_SIZE = 8;
+const CELL_SIZE = 64;
+const WINDOW_WIDTH = GRID_SIZE * CELL_SIZE;
+const WINDOW_HEIGHT = GRID_SIZE * CELL_SIZE;
+
+// Audio constants
+const BASE_FREQUENCY = 261.63; // C4
+const SCALE = [0, 2, 4, 5, 7, 9, 11, 12]; // Major scale intervals
+
+const SynthOMATA = () => {
+  const [activeTab, setActiveTab] = useState(0);
+  const [grid, setGrid] = useState([]);
+  const [audioContext, setAudioContext] = useState(null);
+  const [oscillators, setOscillators] = useState([]);
+  const [isMuted, setIsMuted] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(true);
+
+  useEffect(() => {
+    initGrid();
+  }, []);
+
+  useEffect(() => {
+    let intervalId;
+    if (isPlaying) {
+      intervalId = setInterval(updateConway, 250); // Update every 250ms
+    }
+    return () => clearInterval(intervalId);
+  }, [isPlaying]);
+
+  useEffect(() => {
+    if (audioContext) {
+      updateAudio();
+    }
+  }, [grid, audioContext, isMuted]);
+
+  const initGrid = () => {
+    const newGrid = Array.from({ length: GRID_SIZE }, () =>
+      Array.from({ length: GRID_SIZE }, () => Math.floor(Math.random() * 2))
+    );
+    setGrid(newGrid);
+  };
+
+  const updateConway = () => {
+    setGrid(prevGrid => {
+      const newGrid = prevGrid.map(row => [...row]);
+      for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+          const liveNeighbors = getLiveNeighbors(prevGrid, x, y);
+          if (prevGrid[y][x] === 1 && (liveNeighbors === 2 || liveNeighbors === 3)) {
+            newGrid[y][x] = 1;
+          } else if (prevGrid[y][x] === 0 && liveNeighbors === 3) {
+            newGrid[y][x] = 1;
+          } else {
+            newGrid[y][x] = 0;
+          }
+        }
+      }
+      return newGrid;
+    });
+  };
+
+  const getLiveNeighbors = (grid, x, y) => {
+    let count = 0;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = (x + dx + GRID_SIZE) % GRID_SIZE;
+        const ny = (y + dy + GRID_SIZE) % GRID_SIZE;
+        count += grid[ny][nx];
+      }
+    }
+    return count;
+  };
+
+  const initAudio = useCallback(() => {
+    const context = new (window.AudioContext || window.webkitAudioContext)();
+    setAudioContext(context);
+
+    const newOscillators = [];
+    for (let y = 0; y < GRID_SIZE; y++) {
+      const rowOscillators = [];
+      for (let x = 0; x < GRID_SIZE; x++) {
+        const oscillator = context.createOscillator();
+        const gainNode = context.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(context.destination);
+        oscillator.start();
+        gainNode.gain.setValueAtTime(0, context.currentTime); // Start muted
+        rowOscillators.push({ oscillator, gainNode });
+      }
+      newOscillators.push(rowOscillators);
+    }
+    setOscillators(newOscillators);
+    setIsMuted(false);
+  }, []);
+
+  const updateAudio = () => {
+    if (!audioContext || isMuted) return;
+
+    grid.forEach((row, y) => {
+      row.forEach((cell, x) => {
+        const { oscillator, gainNode } = oscillators[y][x];
+        const frequency = BASE_FREQUENCY * Math.pow(2, SCALE[y] / 12) * Math.pow(2, x / GRID_SIZE);
+        oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+        
+        if (cell === 1) {
+          gainNode.gain.setTargetAtTime(0.1, audioContext.currentTime, 0.01);
+        } else {
+          gainNode.gain.setTargetAtTime(0, audioContext.currentTime, 0.01);
+        }
+      });
+    });
+  };
+
+  const toggleMute = () => {
+    if (isMuted) {
+      if (!audioContext) {
+        initAudio();
+      } else {
+        setIsMuted(false);
+      }
+    } else {
+      setIsMuted(true);
+      oscillators.flat().forEach(({ gainNode }) => {
+        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+      });
+    }
+  };
+
+  const toggleCell = (x, y) => {
+    setGrid(prevGrid => {
+      const newGrid = prevGrid.map(row => [...row]);
+      newGrid[y][x] = 1 - newGrid[y][x];  // Toggle between 0 and 1
+      return newGrid;
+    });
+  };
+
+  const togglePlay = () => {
+    setIsPlaying(!isPlaying);
+  };
+
+  const tabs = ['Simulation', 'Code', 'About'];
+
+  return (
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">synthOMATA Interactive</h1>
+      <div className="flex mb-4">
+        {tabs.map((tab, index) => (
+          <button
+            key={tab}
+            className={`px-4 py-2 ${activeTab === index ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+            onClick={() => setActiveTab(index)}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 0 && (
+        <div>
+          <h2 className="text-xl font-semibold mb-2">Conway's Game of Life</h2>
+          <div className="grid grid-cols-8 gap-1 mb-4">
+            {grid.map((row, y) =>
+              row.map((cell, x) => (
+                <div
+                  key={`${x}-${y}`}
+                  className={`w-8 h-8 ${cell ? 'bg-black' : 'bg-white'} border border-gray-300 cursor-pointer`}
+                  onClick={() => toggleCell(x, y)}
+                />
+              ))
+            )}
+          </div>
+          <div className="flex space-x-2">
+            <button
+              onClick={toggleMute}
+              className="flex items-center bg-blue-500 text-white px-4 py-2 rounded"
+            >
+              {isMuted ? <VolumeX size={24} /> : <Volume2 size={24} />}
+              <span className="ml-2">{isMuted ? 'Unmute' : 'Mute'}</span>
+            </button>
+            <button
+              onClick={togglePlay}
+              className="flex items-center bg-green-500 text-white px-4 py-2 rounded"
+            >
+              {isPlaying ? <Pause size={24} /> : <Play size={24} />}
+              <span className="ml-2">{isPlaying ? 'Pause' : 'Play'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 1 && (
+        <div>
+          <h2 className="text-xl font-semibold mb-2">JavaScript Code</h2>
+          <pre className="bg-gray-100 p-4 rounded overflow-x-auto">
+            <code>{`
+const toggleCell = (x, y) => {
+  setGrid(prevGrid => {
+    const newGrid = prevGrid.map(row => [...row]);
+    newGrid[y][x] = 1 - newGrid[y][x];  // Toggle between 0 and 1
+    return newGrid;
+  });
+};
+
+// In the JSX
+<div
+  key={\`\${x}-\${y}\`}
+  className={\`w-8 h-8 \${cell ? 'bg-black' : 'bg-white'} border border-gray-300 cursor-pointer\`}
+  onClick={() => toggleCell(x, y)}
+/>
+            `}</code>
+          </pre>
+        </div>
+      )}
+
+      {activeTab === 2 && (
+        <div>
+          <h2 className="text-xl font-semibold mb-2">About synthOMATA</h2>
+          <p className="mb-4">
+            synthOMATA is an interactive audio-visual project combining cellular automata with sound synthesis.
+            This demo showcases Conway's Game of Life with user interaction and audio feedback.
+            Click on cells to toggle them on/off, creating your own patterns and melodies.
+            Each cell corresponds to a unique tone, audible when the cell is alive.
+            The vertical position of a cell determines its base note in a major scale, while the
+            horizontal position creates subtle variations in pitch within each note.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default SynthOMATA;
